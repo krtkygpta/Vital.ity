@@ -1,0 +1,18 @@
+*.iml
+.gradle
+/local.properties
+/.idea
+.kotlin
+.DS_Store
+/build
+/app/build
+/scratchpad
+*.ap_
+*.apk
+*.dex
+
+# Internal plans and agent tooling
+PLAN.md
+plan_*.md
+.agents/
+.commandcode/
