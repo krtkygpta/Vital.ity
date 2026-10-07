@@ -86,8 +86,9 @@ fun SpO2DetailScreen(
             else -> selectedDate.format(dateFormatter)
         }
         TimeRange.WEEK -> {
-            val start = weekStartMon(selectedDate)
-            val end = weekEndMon(selectedDate)
+            // Sunday-anchored so the label matches the week the navigator shows.
+            val start = weekStartSun(selectedDate)
+            val end = weekEndSun(selectedDate)
             if (start.monthValue == end.monthValue) {
                 "${start.dayOfMonth}–${end.dayOfMonth} ${end.format(monthFmt)}"
             } else {
@@ -152,7 +153,7 @@ fun SpO2DetailScreen(
         if (isDay) {
             listOf(RestingPoint(selectedDate, dailySpO2))
         } else if (selectedRange == TimeRange.WEEK) {
-            val start = weekStartMon(selectedDate)
+            val start = weekStartSun(selectedDate)
             (0..6).map { i ->
                 val d = start.plusDays(i.toLong())
                 val value = period.find { it.first == d }?.second

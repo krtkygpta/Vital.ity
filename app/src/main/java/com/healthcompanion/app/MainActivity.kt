@@ -630,7 +630,7 @@ class MainActivity : ComponentActivity() {
                                 onNavigateToHourlyActivity = { navController.navigate(Screen.HourlyActivity.route) },
                                 onNavigateToWeeklyCardio = { navController.navigate(Screen.WeeklyCardio.createRoute()) },
                                 onNavigateToCategory = { category ->
-                                    navController.navigate(Screen.CategoryMetrics.createRoute(category.name))
+                                    navController.navigate(Screen.CategoryMetrics.createRoute(category.key))
                                 },
                                 onNavigateToProfile = { navController.navigate(Screen.Profile.route) },
                                 onNavigateToCatalog = { navController.navigate(Screen.Catalog.route) },

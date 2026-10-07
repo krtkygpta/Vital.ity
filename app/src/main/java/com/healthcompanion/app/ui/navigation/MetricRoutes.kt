@@ -142,10 +142,15 @@ fun GenericMetricRoute(
         try {
             if (isWeight) {
                 val realLatest = manager.readLatestWeight().getOrNull()
+                // Raw daily readings, sorted oldest-first. Pre-bucketing into
+                // monthly points (the old readWeightPeriods) meant the screen
+                // could not filter per selected range: week views were usually
+                // empty and month/year views looked the same across periods.
                 val realHistory: List<Pair<LocalDate, Float?>> = manager
-                    .readWeightPeriods(days = 365)
+                    .readWeightHistory(daysBack = 1095)
                     .getOrDefault(emptyList())
-                    .map { (date, value) -> date to value as Float? }
+                    .map { (date, kg) -> date to kg.toFloat() }
+                    .sortedBy { it.first }
                 latest = realLatest
                 history = realHistory
             } else {

@@ -198,7 +198,10 @@ fun SleepDetailScreen(
         else "Stage breakdown • longest session"
     }
 
-    var selectedWeekDayIndex by remember { mutableStateOf(6) } // Default to today (last index of 7-day strip)
+    // -1 = no explicit pick: auto-select the newest day with recorded sleep
+    // (derived below) until the user taps one. Keyed on the period so week
+    // navigation re-derives a sensible default instead of keeping a stale index.
+    var pickedWeekDayIndex by remember(periodStartDate) { mutableStateOf(-1) }
 
     val weekDaysData: List<SleepDayData> = remember(periodStartDate, periodSessions) {
         val list = mutableListOf<SleepDayData>()
@@ -212,6 +215,13 @@ fun SleepDetailScreen(
         }
         list
     }
+
+    // Auto-selection follows the data instead of a hard-coded index: the strip is
+    // Sunday-anchored, so index 6 is Saturday — usually a future, empty day, and
+    // the week view used to open on "No sleep data" until the user tapped.
+    val selectedWeekDayIndex = pickedWeekDayIndex.takeIf { it in weekDaysData.indices }
+        ?: weekDaysData.indexOfLast { it.session != null && it.hours > 0f }.takeIf { it >= 0 }
+        ?: (today.toEpochDay() - periodStartDate.toEpochDay()).toInt().coerceIn(0, 6)
 
     LazyColumn(
         modifier = modifier
@@ -336,20 +346,25 @@ fun SleepDetailScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(verticalAlignment = Alignment.Bottom) {
+                        // Weighted Column: the 48sp value keeps the full row
+                        // width (wrapping if needed) instead of pushing the date
+                        // badge out of the row — and it reserves the close
+                        // button's 32dp, which an unweighted child consumed.
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
                             Text(
                                 text = headlineValue,
                                 style = MetricHero,
                                 color = healthColors.textPrimary,
                                 fontWeight = FontWeight.Bold
                             )
-                            Spacer(modifier = Modifier.width(6.dp))
                             Text(
                                 text = headlineBadge,
                                 color = healthColors.textSecondary,
                                 style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = FontWeight.Medium,
-                                modifier = Modifier.padding(bottom = 6.dp)
+                                fontWeight = FontWeight.Medium
                             )
                         }
 
@@ -374,11 +389,16 @@ fun SleepDetailScreen(
                         text = buildString {
                             append(subTitleText)
                             append(" • ")
+                            // Derived from the selected day's actual date — a
+                            // hard-coded index assumed index 6 was today, but the
+                            // strip is Sunday-anchored (6 = Saturday).
+                            val selectedDate = selectedItem?.date
                             append(
-                                when (selectedWeekDayIndex) {
-                                    6 -> "Today"
-                                    5 -> "Yesterday"
-                                    else -> selectedItem?.date?.format(dateFormatter) ?: "Today"
+                                when (selectedDate) {
+                                    null -> ""
+                                    today -> "Today"
+                                    today.minusDays(1) -> "Yesterday"
+                                    else -> selectedDate.format(dateFormatter)
                                 }
                             )
                         },
@@ -440,14 +460,14 @@ fun SleepDetailScreen(
                         SleepScheduleCandlestickChart(
                             daysData = weekDaysData,
                             selectedIndex = selectedWeekDayIndex,
-                            onDaySelected = { selectedWeekDayIndex = it }
+                            onDaySelected = { pickedWeekDayIndex = it }
                         )
                     }
                     "Score" -> {
                         SleepScorePointChart(
                             daysData = weekDaysData,
                             selectedIndex = selectedWeekDayIndex,
-                            onDaySelected = { selectedWeekDayIndex = it },
+                            onDaySelected = { pickedWeekDayIndex = it },
                             isEfficiency = false
                         )
                     }
@@ -455,7 +475,7 @@ fun SleepDetailScreen(
                         SleepScorePointChart(
                             daysData = weekDaysData,
                             selectedIndex = selectedWeekDayIndex,
-                            onDaySelected = { selectedWeekDayIndex = it },
+                            onDaySelected = { pickedWeekDayIndex = it },
                             isEfficiency = true
                         )
                     }
@@ -464,7 +484,7 @@ fun SleepDetailScreen(
                             daysData = weekDaysData,
                             goalHours = 6.0f,
                             selectedIndex = selectedWeekDayIndex,
-                            onDaySelected = { selectedWeekDayIndex = it }
+                            onDaySelected = { pickedWeekDayIndex = it }
                         )
                     }
                 }
@@ -485,11 +505,11 @@ fun SleepDetailScreen(
             item {
                 Column(modifier = Modifier.fillMaxWidth()) {
                     weekDaysData.reversed().forEachIndexed { index, dayItem ->
-                        val isToday = (index == 0)
-                        val isYest = (index == 1)
-                        val dayLabel = when {
-                            isToday -> "Today"
-                            isYest -> "Yesterday"
+                        // Label from the actual date: the reversed list starts at
+                        // Saturday (Sunday-anchored strip), not at today.
+                        val dayLabel = when (dayItem.date) {
+                            today -> "Today"
+                            today.minusDays(1) -> "Yesterday"
                             else -> dayItem.date.format(dateFormatter)
                         }
                         val h = dayItem.hours.toInt()
@@ -507,7 +527,7 @@ fun SleepDetailScreen(
                         ConnectedListItem(
                             index = index,
                             count = weekDaysData.size,
-                            onClick = { selectedWeekDayIndex = 6 - index },
+                            onClick = { pickedWeekDayIndex = 6 - index },
                             leadingContent = null,
                             supportingContent = {
                                 Row(
@@ -857,7 +877,12 @@ fun SleepDetailScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Column(
+                                // Weighted so the long summary text can't consume
+                                // the whole row and squeeze the 60dp ring to zero.
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
                                 Text(
                                     text = "Sleep score",
                                     color = healthColors.textSecondary,

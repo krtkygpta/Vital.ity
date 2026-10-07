@@ -1264,11 +1264,13 @@ class HealthConnectManager(private val context: Context) {
     }
 
     suspend fun readWeeklyOxygenSaturation(endDate: LocalDate): Result<List<Pair<LocalDate, Int?>>> {
-        val monday = weekStartMon(endDate)
+        // Sunday-anchored to match periodBounds/weekStartSun used by the date
+        // navigator; a Monday window here silently dropped the week's Sunday.
+        val sunday = endDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.SUNDAY))
         val today = LocalDate.now()
         val list = mutableListOf<Pair<LocalDate, Int?>>()
         for (i in 0..6) {
-            val d = monday.plusDays(i.toLong())
+            val d = sunday.plusDays(i.toLong())
             val pct = if (d.isAfter(today)) null else readOxygenSaturationForDate(d).getOrNull()
             list.add(d to pct)
         }
@@ -1555,41 +1557,6 @@ class HealthConnectManager(private val context: Context) {
         } catch (e: Exception) {
             Result.failure(e)
         }
-    }
-
-    /**
-     * Weight is a slow-moving metric measured in weeks or months, not days.
-     * Buckets the raw history into one averaged point per period so the chart
-     * has a single meaningful bar per column instead of a near-flat line.
-     */
-    suspend fun readWeightPeriods(
-        days: Int,
-        endDate: LocalDate = LocalDate.now()
-    ): Result<List<Pair<LocalDate, Float>>> = withContext(Dispatchers.IO) {
-        val history = readWeightHistory(daysBack = days.toLong() + 45L)
-        if (history.isFailure) return@withContext Result.failure(history.exceptionOrNull() ?: Exception())
-        val records = history.getOrDefault(emptyList())
-
-        val start = endDate.minusDays((days - 1).toLong())
-        val inRange = records.filter { !it.first.isAfter(endDate) && !it.first.isBefore(start) }
-        if (inRange.isEmpty()) return@withContext Result.success(emptyList())
-
-        val result: List<Pair<LocalDate, Float>> = when {
-            // Daily buckets (week view)
-            days <= 7 -> inRange
-                .sortedBy { it.first }
-                .map { (d, kg) -> d to kg.toFloat() }
-
-            // One point per month (month / 3-month / year views)
-            else -> inRange
-                .groupBy { YearMonth.from(it.first) }
-                .toSortedMap()
-                .map { (ym, entries) ->
-                    val avg = entries.map { it.second }.average()
-                    ym.atDay(1) to Math.round(avg * 10.0).div(10.0).toFloat()
-                }
-        }
-        Result.success(result)
     }
 
     /** Weight recorded on or before [endDate], for the headline value. */

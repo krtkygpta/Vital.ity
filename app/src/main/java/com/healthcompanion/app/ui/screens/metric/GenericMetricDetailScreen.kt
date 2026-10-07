@@ -51,6 +51,7 @@ import com.healthcompanion.app.ui.components.isPeriodSelectable
 import com.healthcompanion.app.ui.components.stepForward
 import com.healthcompanion.app.ui.components.weekEndMon
 import com.healthcompanion.app.ui.components.weekStartMon
+import com.healthcompanion.app.ui.components.xAxisLabels
 import com.healthcompanion.app.ui.components.EmptyState
 import com.healthcompanion.app.ui.theme.LocalHealthColors
 import com.healthcompanion.app.ui.theme.MetricHero
@@ -116,10 +117,12 @@ fun GenericMetricDetailScreen(
             TimeRange.DAY -> historyData.filter { it.first == selectedDate }
             TimeRange.WEEK -> {
                 val start = weekStartMon(selectedDate)
-                val end = weekEndMon(selectedDate)
-                val inRange = historyData.filter { !it.first.isBefore(start) && !it.first.isAfter(end) }
-                if (inRange.isNotEmpty()) inRange
-                else (0..6).map { start.plusDays(it.toLong()) to null }
+                // Always 7 slots (null = no reading) so the weekday axis stays
+                // stable and aligned with the days being shown.
+                (0..6).map { i ->
+                    val d = start.plusDays(i.toLong())
+                    d to historyData.firstOrNull { it.first == d }?.second
+                }
             }
             TimeRange.MONTH -> {
                 val start = selectedDate.withDayOfMonth(1)
@@ -128,13 +131,13 @@ fun GenericMetricDetailScreen(
             }
             TimeRange.THREE_MONTHS -> {
                 val start = selectedDate.minusMonths(2).withDayOfMonth(1)
-                val inRange = historyData.filter { !it.first.isBefore(start) && !it.first.isAfter(selectedDate) }
-                if (inRange.isNotEmpty()) inRange else historyData.takeLast(3)
+                // No takeLast fallback: replaying the most recent points for an
+                // empty past period made every period show the same graph.
+                historyData.filter { !it.first.isBefore(start) && !it.first.isAfter(selectedDate) }
             }
             TimeRange.YEAR -> {
                 val start = selectedDate.minusMonths(11).withDayOfMonth(1)
-                val inRange = historyData.filter { !it.first.isBefore(start) && !it.first.isAfter(selectedDate) }
-                if (inRange.isNotEmpty()) inRange else historyData.takeLast(12)
+                historyData.filter { !it.first.isBefore(start) && !it.first.isAfter(selectedDate) }
             }
         }
     }
@@ -142,18 +145,21 @@ fun GenericMetricDetailScreen(
     val historyList = remember(selectedRange, selectedDate, displayPoints, historyData) {
         when (selectedRange) {
             TimeRange.DAY -> {
-                val pts = displayPoints.filter { it.second != null }
-                if (pts.isNotEmpty()) pts.map { (date, v) -> "Today" to v }
-                else listOf("Today" to recordedValue)
+                // Real readings for the day only; no fabricated "Today" row.
+                displayPoints.filter { it.second != null }.map { (date, v) ->
+                    val label = when (date) {
+                        LocalDate.now() -> "Today"
+                        LocalDate.now().minusDays(1) -> "Yesterday"
+                        else -> date.format(dateFormatter)
+                    }
+                    label to v
+                }
             }
             TimeRange.WEEK -> {
-                val validDays = displayPoints.filter { it.second != null }
-                if (validDays.isNotEmpty()) {
-                    validDays.reversed().map { (date, v) ->
-                        date.format(DateTimeFormatter.ofPattern("EEE d MMM")) to v
-                    }
-                } else {
-                    listOf(selectedDate.format(DateTimeFormatter.ofPattern("EEE d MMM")) to recordedValue)
+                // Real readings for the week only; a week without data hides
+                // the section instead of inventing a row from the current value.
+                displayPoints.filter { it.second != null }.reversed().map { (date, v) ->
+                    date.format(DateTimeFormatter.ofPattern("EEE d MMM")) to v
                 }
             }
             TimeRange.MONTH -> {
@@ -168,16 +174,19 @@ fun GenericMetricDetailScreen(
                         label to total
                     }
                 } else {
+                    // Weekly buckets of the selected month's readings — one row
+                    // per week instead of one overlapping "6-day window" row per
+                    // daily reading (or a fabricated current-value row when empty).
                     val valid = displayPoints.filter { it.second != null }
-                    if (valid.isNotEmpty()) {
-                        valid.reversed().mapIndexed { idx, (date, v) ->
-                            val label = if (idx == 0 && date.isAfter(LocalDate.now().minusDays(7))) "This week"
-                            else "${date.minusDays(6).format(DateTimeFormatter.ofPattern("d"))}–${date.format(DateTimeFormatter.ofPattern("d MMM"))}"
-                            label to v
+                    if (valid.isEmpty()) emptyList()
+                    else valid.groupBy { weekStartMon(it.first) }
+                        .entries.sortedByDescending { it.key }
+                        .map { (wStart, pts) ->
+                            val wEnd = weekEndMon(wStart)
+                            val label = if (!wEnd.isBefore(LocalDate.now()) && !wStart.isAfter(LocalDate.now())) "This week"
+                            else "${wStart.format(DateTimeFormatter.ofPattern("d MMM"))}–${wEnd.format(DateTimeFormatter.ofPattern("d MMM"))}"
+                            label to pts.mapNotNull { it.second }.average().toFloat()
                         }
-                    } else {
-                        listOf("This month" to recordedValue)
-                    }
                 }
             }
             TimeRange.THREE_MONTHS -> {
@@ -193,21 +202,27 @@ fun GenericMetricDetailScreen(
                     }
                 } else {
                     val months = (0..2).map { selectedDate.minusMonths(it.toLong()) }
-                    months.mapIndexed { idx, mDate ->
-                        val label = if (idx == 0) "This month" else mDate.format(DateTimeFormatter.ofPattern("MMMM"))
-                        val v = historyData.firstOrNull { it.first.month == mDate.month && it.first.year == mDate.year }?.second
-                            ?: recordedValue
-                        label to v
+                    months.map { mDate ->
+                        val label = if (mDate.month == LocalDate.now().month && mDate.year == LocalDate.now().year) "This month"
+                        else mDate.format(DateTimeFormatter.ofPattern("MMMM"))
+                        // Average of the readings actually in that month; null
+                        // (row dropped) when there are none — never the current value.
+                        val monthValues = displayPoints
+                            .filter { it.first.month == mDate.month && it.first.year == mDate.year }
+                            .mapNotNull { it.second }
+                        label to if (monthValues.isNotEmpty()) monthValues.average().toFloat() else null
                     }
                 }
             }
             TimeRange.YEAR -> {
                 val months = (0..11).map { selectedDate.minusMonths(it.toLong()) }
-                months.mapIndexed { idx, mDate ->
-                    val label = if (idx == 0) "This month" else mDate.format(DateTimeFormatter.ofPattern("MMMM"))
-                    val v = historyData.firstOrNull { it.first.month == mDate.month && it.first.year == mDate.year }?.second
-                        ?: recordedValue
-                    label to v
+                months.map { mDate ->
+                    val label = if (mDate.month == LocalDate.now().month && mDate.year == LocalDate.now().year) "This month"
+                    else mDate.format(DateTimeFormatter.ofPattern("MMMM"))
+                    val monthValues = displayPoints
+                        .filter { it.first.month == mDate.month && it.first.year == mDate.year }
+                        .mapNotNull { it.second }
+                    label to if (monthValues.isNotEmpty()) monthValues.average().toFloat() else null
                 }
             }
         }
@@ -490,12 +505,20 @@ fun GenericMetricDetailScreen(
                 config.title.contains("Temperature", ignoreCase = true) ||
                 config.title.contains("HRV", ignoreCase = true)
 
-            val metricLabels: List<String> = when (selectedRange) {
-                TimeRange.DAY -> listOf("12am", "6am", "12pm", "6pm", "12am")
-                TimeRange.WEEK -> listOf("F", "S", "S", "M", "T", "W", "T")
-                TimeRange.MONTH -> listOf("1", "8", "15", "22", "29")
-                TimeRange.THREE_MONTHS -> listOf("Jul", "Aug", "Sep")
-                TimeRange.YEAR -> listOf("Jan", "Mar", "May", "Jul", "Sep", "Nov")
+            // Labels derived from the actual bucket dates (xAxisLabels) so they
+            // track the selected period. The old fixed placeholders always read
+            // "Jul Aug Sep" for any quarter and put Friday first under
+            // Monday-anchored week data.
+            val metricLabels: List<String> = when {
+                selectedRange == TimeRange.DAY -> listOf("12am", "6am", "12pm", "6pm", "12am")
+                displayPoints.isNotEmpty() -> xAxisLabels(displayPoints.map { it.first }, selectedRange)
+                else -> when (selectedRange) {
+                    TimeRange.WEEK -> listOf("M", "T", "W", "T", "F", "S", "S")
+                    TimeRange.MONTH -> listOf("1", "8", "15", "22", "29")
+                    TimeRange.THREE_MONTHS -> listOf("Jul", "Aug", "Sep")
+                    TimeRange.YEAR -> listOf("Jan", "Mar", "May", "Jul", "Sep", "Nov")
+                    else -> emptyList()
+                }
             }
 
             if (hasData) {

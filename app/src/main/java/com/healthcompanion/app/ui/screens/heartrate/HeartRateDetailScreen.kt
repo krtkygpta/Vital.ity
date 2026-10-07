@@ -231,7 +231,9 @@ fun HeartRateDetailScreen(
         } else null
 
     // Period min/max ranges for Time in zones
-    val periodRanges = remember(currentDailySummary, weeklyHeartRate, selectedDate, selectedRange) {
+    // Keyed on dailySummaryCache too: the cache is written last by the effect,
+    // so without it the zones/ranges stay frozen on the previous period's data.
+    val periodRanges = remember(currentDailySummary, weeklyHeartRate, dailySummaryCache, selectedDate, selectedRange) {
         if (selectedRange == TimeRange.WEEK) {
             weeklyHeartRate
         } else {
@@ -262,7 +264,7 @@ fun HeartRateDetailScreen(
         }
     }
 
-    val periodZoneMinutes = remember(selectedRange, selectedDate, periodRanges) {
+    val periodZoneMinutes = remember(selectedRange, selectedDate, periodRanges, dailySummaryCache) {
         // Zone minutes come from real zone data only. The previous version
         // seeded them from the day of the month whenever all three were zero,
         // which drew plausible-looking bars for days with no heart-rate record.
